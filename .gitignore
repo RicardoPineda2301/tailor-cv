@@ -1,0 +1,21 @@
+# Personal data & generated outputs
+data/profile.json
+output/
+*.pdf
+*.db
+*.sqlite
+*.csv
+
+# Legacy script with hardcoded personal info
+CV-editor.py
+
+# Environment & secrets
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/

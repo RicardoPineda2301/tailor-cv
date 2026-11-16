@@ -1,0 +1,44 @@
+{
+  "name": "JANE DOE",
+  "skills": [
+    ["Automation", 5],
+    ["QA Testing", 5],
+    ["Python", 4],
+    ["SQL", 4],
+    ["JavaScript", 3],
+    ["Docker", 3]
+  ],
+  "languages": [
+    ["Spanish", 5],
+    ["English", 5]
+  ],
+  "education": {
+    "dates": "Jan 2018 - Nov 2022",
+    "title": "Bachelor's Degree in Computer Science",
+    "institution": "Example University",
+    "description": "Four-year program focused on software engineering, algorithms, data structures, and database management."
+  },
+  "variants": {
+    "default": {
+      "summary": "Software & QA Automation Engineer with 3+ years of experience building reliable test suites and backend services with Python, Playwright, and SQL.",
+      "personal_details": [
+        "Name", "Jane Doe", "",
+        "Address", "Madrid, Spain", "",
+        "Phone", "+34 600 000 000", "",
+        "Email", "jane.doe@example.com", "",
+        "LinkedIn", "linkedin.com/in/janedoe"
+      ],
+      "work_experience": [
+        {
+          "dates": "Jun 2022 - Present",
+          "title": "QA Automation Engineer",
+          "company": "Example Tech Corp",
+          "bullets": [
+            "Designed and maintained 150+ automated end-to-end tests using Playwright and Python.",
+            "Reduced regression testing time by 40% across CI/CD pipelines."
+          ]
+        }
+      ]
+    }
+  }
+}
