@@ -7,6 +7,8 @@ import re
 import sys
 from pathlib import Path
 
+from src.apply_assistant import run_apply_assistant
+from src.job_fetcher import JOB_SOURCES, search_jobs
 from src.pdf_generator import build_cv_data, draw_cv, load_profile
 from src.tailor import tailor_cv
 from src.tracker import (
@@ -115,6 +117,56 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_search(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    variant = args.variant or next(iter(profile["variants"]))
+    cv_data = build_cv_data(profile, variant)
+
+    sources = tuple(JOB_SOURCES.keys()) if args.source == "all" else (args.source,)
+    jobs = search_jobs(cv_data, query=args.query, sources=sources, limit=args.limit)
+    if not jobs:
+        print("No matching jobs found.")
+        return 0
+
+    for idx, job in enumerate(jobs, start=1):
+        skills = ", ".join(job.matched_skills) or "None"
+        extra = " ".join(f"{k}={v}" for k, v in job.metadata.items())
+        extra_suffix = f" ({extra})" if extra else ""
+        print(f"[{idx}] {job.role} @ {job.company} ({job.location}) [{job.source}]{extra_suffix}")
+        print(f"    Match: {job.match_score}% | Skills: {skills}")
+        print(f"    URL  : {job.url}")
+    return 0
+
+
+def _cmd_apply(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    variant = args.variant or next(iter(profile["variants"]))
+    cv_data = build_cv_data(profile, variant)
+
+    jd_text = ""
+    if args.jd_text:
+        jd_text = args.jd_text
+    elif args.jd_file:
+        jd_text = Path(args.jd_file).read_text(encoding="utf-8")
+
+    filename = f"CV_{_slugify(args.company)}_{_slugify(args.role)}_{variant}.pdf"
+    out_file = Path(args.out) if args.out else (DEFAULT_OUTPUT_DIR / filename)
+
+    run_apply_assistant(
+        job_url=args.url,
+        company=args.company,
+        role=args.role,
+        cv_data=cv_data,
+        variant=variant,
+        pdf_out_path=out_file,
+        job_description=jd_text,
+        mode=args.mode,
+        provider=args.provider,
+        db_path=Path(args.db),
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tailor-cv",
@@ -163,6 +215,40 @@ def build_parser() -> argparse.ArgumentParser:
     p_export = sub.add_parser("export", help="Export tracked applications to CSV.")
     p_export.add_argument("--out", default="output/applications.csv", help="Output CSV path.")
     p_export.set_defaults(func=_cmd_export)
+
+    p_search = sub.add_parser("search", help="Search public job APIs and rank matches.")
+    p_search.add_argument("--query", default="", help="Search keywords (e.g. 'QA Automation').")
+    p_search.add_argument(
+        "--source",
+        choices=("all", *JOB_SOURCES.keys()),
+        default="all",
+        help="Job API source.",
+    )
+    p_search.add_argument("--variant", default=None, help="Profile variant (e.g. eu).")
+    p_search.add_argument("--limit", type=int, default=10, help="Max results to display.")
+    p_search.set_defaults(func=_cmd_search)
+
+    p_apply = sub.add_parser("apply", help="Open job URL in Playwright, tailor CV, pre-fill & pause.")
+    p_apply.add_argument("--url", required=True, help="Job application URL.")
+    p_apply.add_argument("--company", required=True, help="Target company name.")
+    p_apply.add_argument("--role", required=True, help="Target role title.")
+    p_apply.add_argument("--variant", default=None, help="Profile variant (e.g. eu).")
+    p_apply.add_argument("--jd-file", help="Optional job description text file.")
+    p_apply.add_argument("--jd-text", help="Optional inline job description text.")
+    p_apply.add_argument(
+        "--mode",
+        choices=("auto", "ai", "local"),
+        default="auto",
+        help="Tailoring mode.",
+    )
+    p_apply.add_argument(
+        "--provider",
+        choices=("gemini", "mistral", "openai"),
+        default=None,
+        help="Preferred AI provider.",
+    )
+    p_apply.add_argument("--out", default=None, help="Optional custom output PDF path.")
+    p_apply.set_defaults(func=_cmd_apply)
 
     return parser
 

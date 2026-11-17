@@ -46,3 +46,14 @@ python -m src.main list
 python -m src.main status --id 1 --status applied
 python -m src.main export --out output/applications.csv
 ```
+
+Search public job APIs (Arbeitnow & Remotive) ranked by skill match:
+```bash
+python -m src.main search --query "QA" --variant eu --limit 5
+```
+
+Open a job posting with the human-in-the-loop Playwright assistant (tailors CV, pre-fills standard fields, attaches PDF, and pauses for your review/submit):
+```bash
+python -m src.main apply --company "Aquablu B.V" --role "Software QA Engineer" --variant eu --url "https://..."
+```
+
