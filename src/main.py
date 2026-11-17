@@ -9,8 +9,8 @@ from pathlib import Path
 
 from src.apply_assistant import run_apply_assistant
 from src.job_fetcher import JOB_SOURCES, search_jobs
-from src.pdf_generator import build_cv_data, draw_cv, load_profile
-from src.tailor import tailor_cv
+from src.pdf_generator import build_cv_data, draw_cover_letter, draw_cv, load_profile
+from src.tailor import generate_cover_letter, tailor_cv
 from src.tracker import (
     DEFAULT_DB_PATH,
     VALID_STATUSES,
@@ -85,6 +85,19 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
         print(f"Missing keywords: {', '.join(result.missing_keywords)}")
     if result.notes:
         print(f"Notes           : {result.notes}")
+
+    if args.cover_letter:
+        cl_text, cl_mode = generate_cover_letter(
+            result.tailored_data,
+            jd_text,
+            company=args.company,
+            role=args.role,
+            mode=args.mode,
+            provider=args.provider,
+        )
+        cl_pdf = saved.with_name(f"{saved.stem}_CoverLetter.pdf")
+        draw_cover_letter(cl_pdf, result.tailored_data, args.company, args.role, cl_text)
+        print(f"Cover letter PDF: {cl_pdf} ({cl_mode})")
     return 0
 
 
@@ -163,6 +176,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
         mode=args.mode,
         provider=args.provider,
         db_path=Path(args.db),
+        dry_run=args.dry_run,
     )
     return 0
 
@@ -202,6 +216,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_tailor.add_argument("--url", default="", help="Optional job posting URL.")
     p_tailor.add_argument("--out", default=None, help="Optional custom output PDF path.")
+    p_tailor.add_argument(
+        "--cover-letter",
+        action="store_true",
+        help="Also generate a tailored Cover Letter PDF.",
+    )
     p_tailor.set_defaults(func=_cmd_tailor)
 
     p_list = sub.add_parser("list", help="List tracked applications.")
@@ -248,6 +267,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Preferred AI provider.",
     )
     p_apply.add_argument("--out", default=None, help="Optional custom output PDF path.")
+    p_apply.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Tailor CV, pre-fill form, save screenshot, and exit without submitting.",
+    )
     p_apply.set_defaults(func=_cmd_apply)
 
     return parser

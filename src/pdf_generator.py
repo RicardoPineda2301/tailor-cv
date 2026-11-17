@@ -319,3 +319,52 @@ def draw_cv(filename: str | Path, data: dict[str, Any]) -> Path:
 
     cnv.save()
     return out_path
+
+
+def draw_cover_letter(
+    filename: str | Path,
+    cv_data: dict[str, Any],
+    company: str,
+    role: str,
+    body_text: str,
+) -> Path:
+    """Render a clean PDF cover letter matching the CV's typography and palette."""
+    out_path = Path(filename)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cnv = canvas.Canvas(str(out_path), pagesize=A4)
+    title_color = colors.HexColor("#252a33")
+    body_color = colors.HexColor("#3e434b")
+    muted_color = colors.HexColor("#6f7682")
+
+    margin_x = 56
+    content_width = PAGE_WIDTH - (margin_x * 2)
+    y = PAGE_HEIGHT - 64
+
+    cnv.setFillColor(title_color)
+    cnv.setFont("Helvetica-Bold", 20)
+    cnv.drawString(margin_x, y, cv_data["name"])
+    y -= 18
+
+    cnv.setFillColor(muted_color)
+    cnv.setFont("Helvetica", 10)
+    cnv.drawString(margin_x, y, f"Application: {role} — {company}")
+    y -= 14
+    _draw_separator(cnv, margin_x, margin_x + content_width, y)
+    y -= 28
+
+    para_style = ParagraphStyle(
+        "cover_body",
+        fontName="Helvetica",
+        fontSize=10.5,
+        leading=15,
+        textColor=body_color,
+    )
+    for paragraph in body_text.strip().split("\n\n"):
+        cleaned = paragraph.strip().replace("\n", "<br/>")
+        if cleaned:
+            y = _draw_paragraph(cnv, cleaned, para_style, margin_x, y, content_width)
+            y -= 12
+
+    cnv.save()
+    return out_path

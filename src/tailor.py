@@ -186,21 +186,41 @@ def _build_prompt(cv_data: dict[str, Any], job_description: str) -> str:
         "6. Respond with valid JSON ONLY, no markdown fences, matching this schema:\n"
         '{"summary": "...", "ordered_skills": ["..."], "ordered_bullets": [["..."]], "missing_keywords": ["..."]}\n\n'
         f"SOURCE CV:\n{json.dumps(payload, ensure_ascii=False)}\n\n"
-        f"JOB DESCRIPTION:\n{job_description.strip()}"
+        f"JOB DESCRIPTION:\n{job_description.strip()[:5000]}"
     )
 
 
 def _call_gemini(api_key: str, prompt: str) -> str:
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    body = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
-    }).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    explicit = os.environ.get("GEMINI_MODEL", "").strip()
+    candidates = (
+        [explicit]
+        if explicit
+        else ["gemini-3-flash-preview", "gemma-4-31b-it", "gemini-3.8-flash"]
+    )
+    last_err: Exception | None = None
+
+    for model in candidates:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        body = json.dumps({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except urllib.error.HTTPError as exc:
+            last_err = exc
+            if exc.code in (404, 429, 503):
+                continue
+            raise
+        except TimeoutError as exc:
+            last_err = exc
+            continue
+
+    assert last_err is not None
+    raise last_err
 
 
 def _call_openai_compatible(provider: str, api_key: str, prompt: str) -> str:
@@ -329,3 +349,104 @@ def tailor_cv(
         result = tailor_local(cv_data, job_description)
         result.notes = f"AI call failed ({exc}); used local keyword fallback."
         return result
+
+
+def _cover_letter_fallback(
+    cv_data: dict[str, Any],
+    job_description: str,
+    company: str,
+    role: str,
+) -> str:
+    local = tailor_local(cv_data, job_description)
+    top_skills = ", ".join(local.matched_skills[:5]) or ", ".join(s for s, _ in cv_data["skills"][:4])
+    latest = cv_data["work_experience"][0] if cv_data.get("work_experience") else None
+    latest_line = (
+        f"Most recently as {latest['title']} at {latest['company']}, {latest['bullets'][0].rstrip('.')}."
+        if latest and latest.get("bullets")
+        else ""
+    )
+    return (
+        f"Dear {company} Hiring Team,\n\n"
+        f"I am excited to apply for the {role} position at {company}. "
+        f"{cv_data['summary']}\n\n"
+        f"My background aligns closely with your needs in {top_skills}. {latest_line}\n\n"
+        f"Thank you for your time and consideration. I would welcome the opportunity to discuss "
+        f"how my experience can contribute to {company}.\n\n"
+        f"Sincerely,\n{cv_data['name'].title()}"
+    )
+
+
+def generate_cover_letter(
+    cv_data: dict[str, Any],
+    job_description: str,
+    company: str,
+    role: str,
+    mode: str = "auto",
+    provider: str | None = None,
+) -> tuple[str, str]:
+    """Generate a tailored cover letter without inventing experience.
+
+    Returns (cover_letter_text, mode_used).
+    """
+    load_dotenv()
+    mode = mode.lower()
+    if mode == "local":
+        return _cover_letter_fallback(cv_data, job_description, company, role), "local_template"
+
+    detected = _detect_provider(provider)
+    if not detected:
+        if mode == "ai":
+            raise RuntimeError("No AI API key found in .env.")
+        return _cover_letter_fallback(cv_data, job_description, company, role), "local_template"
+
+    provider_name, api_key = detected
+    payload = {
+        "name": cv_data["name"],
+        "summary": cv_data["summary"],
+        "skills": [s for s, _ in cv_data["skills"]],
+        "work_experience": cv_data["work_experience"][:4],
+    }
+    prompt = (
+        "Write a concise, professional cover letter (170-220 words) in the same language as the job description.\n"
+        "RULES:\n"
+        "1. NEVER invent skills, companies, job titles, dates, or metrics not in SOURCE CV.\n"
+        "2. Address it to the hiring team at the target company for the target role.\n"
+        "3. Return plain text only (no markdown, no placeholders like [Date]).\n\n"
+        f"COMPANY: {company}\nROLE: {role}\n\n"
+        f"SOURCE CV:\n{json.dumps(payload, ensure_ascii=False)}\n\n"
+        f"JOB DESCRIPTION:\n{job_description.strip()[:5000]}"
+    )
+
+    try:
+        if provider_name == "gemini":
+            explicit = os.environ.get("GEMINI_MODEL", "").strip()
+            candidates = (
+                [explicit]
+                if explicit
+                else ["gemini-3-flash-preview", "gemma-4-31b-it", "gemini-3.8-flash"]
+            )
+            text = ""
+            for model in candidates:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                body = json.dumps({
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.35},
+                }).encode("utf-8")
+                req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(req, timeout=60) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                    text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    break
+                except (urllib.error.HTTPError, TimeoutError):
+                    continue
+            if not text:
+                raise RuntimeError("All Gemini models failed.")
+            return text, f"ai:{provider_name}"
+
+        text = _call_openai_compatible(provider_name, api_key, prompt).strip()
+        return text, f"ai:{provider_name}"
+    except Exception:
+        if mode == "ai":
+            raise
+        return _cover_letter_fallback(cv_data, job_description, company, role), "local_template"

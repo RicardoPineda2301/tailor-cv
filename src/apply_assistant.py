@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.pdf_generator import draw_cv
-from src.tailor import tailor_cv
+from src.pdf_generator import draw_cover_letter, draw_cv
+from src.tailor import generate_cover_letter, tailor_cv
 from src.tracker import DEFAULT_DB_PATH, log_application
 
 DEFAULT_BROWSER_PROFILE = Path("output/.browser_profile")
@@ -135,6 +135,46 @@ def _prefill_common_fields(page: Any, contact: dict[str, str], pdf_path: Path) -
     return filled
 
 
+def _detect_cover_letter_target(page: Any, jd_text: str) -> tuple[bool, Any, Any]:
+    """Check if the page or JD asks for a cover letter.
+
+    Returns (should_generate, textarea_locator_or_None, file_input_locator_or_None).
+    """
+    textarea_selectors = [
+        'textarea[name*="cover" i]',
+        'textarea[id*="cover" i]',
+        'textarea[placeholder*="cover" i]',
+        'textarea[aria-label*="cover" i]',
+    ]
+    for sel in textarea_selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() > 0 and loc.is_visible():
+                return True, loc, None
+        except Exception:
+            continue
+
+    file_selectors = [
+        'input[type="file"][name*="cover" i]',
+        'input[type="file"][id*="cover" i]',
+        'input[type="file"][aria-label*="cover" i]',
+    ]
+    for sel in file_selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() > 0:
+                return True, None, loc
+        except Exception:
+            continue
+
+    jd_lower = jd_text.lower()
+    mentions_cl = any(
+        phrase in jd_lower
+        for phrase in ("cover letter", "carta de presentación", "carta de presentacion", "motivation letter")
+    )
+    return mentions_cl, None, None
+
+
 def run_apply_assistant(
     job_url: str,
     company: str,
@@ -146,6 +186,7 @@ def run_apply_assistant(
     mode: str = "auto",
     provider: str | None = None,
     db_path: Path = DEFAULT_DB_PATH,
+    dry_run: bool = False,
 ) -> int:
     """Open job_url in a persistent Chromium browser, tailor CV, pre-fill fields, and pause."""
     try:
@@ -184,11 +225,43 @@ def run_apply_assistant(
         else:
             print("No standard form inputs detected on initial view (open the Apply form if needed).")
 
-        print("\n--- Human-in-the-loop review ---")
-        print("1. Complete any login, CAPTCHA, or custom questions in the browser.")
-        print("2. If you opened the Apply form on a second step, attach:", saved_pdf.resolve())
-        answer = input("Did you submit the application? [y/N] (press Enter when done): ").strip().lower()
-        status = "applied" if answer in ("y", "yes", "s", "si", "sí") else "tailored"
+        needs_cl, cl_textarea, cl_file = _detect_cover_letter_target(page, jd_text)
+        if needs_cl:
+            cl_text, cl_mode = generate_cover_letter(
+                result.tailored_data, jd_text, company=company, role=role, mode=mode, provider=provider
+            )
+            cl_txt_path = saved_pdf.with_name(f"{saved_pdf.stem}_CoverLetter.txt")
+            cl_txt_path.write_text(cl_text, encoding="utf-8")
+            print(f"Cover letter generated ({cl_mode}): {cl_txt_path}")
+
+            if cl_textarea is not None:
+                try:
+                    if not cl_textarea.input_value().strip():
+                        cl_textarea.fill(cl_text)
+                        print("Pre-filled cover letter textarea.")
+                except Exception:
+                    pass
+            elif cl_file is not None:
+                cl_pdf_path = saved_pdf.with_name(f"{saved_pdf.stem}_CoverLetter.pdf")
+                draw_cover_letter(cl_pdf_path, result.tailored_data, company, role, cl_text)
+                try:
+                    cl_file.set_input_files(str(cl_pdf_path.resolve()))
+                    print(f"Attached cover letter PDF: {cl_pdf_path}")
+                except Exception:
+                    pass
+
+        if dry_run:
+            preview_path = pdf_out_path.parent / "dry_run_preview.png"
+            page.screenshot(path=str(preview_path), full_page=True)
+            print(f"[DRY-RUN] Screenshot saved: {preview_path}")
+            print("[DRY-RUN] Form was NOT submitted.")
+            status = "tailored"
+        else:
+            print("\n--- Human-in-the-loop review ---")
+            print("1. Complete any login, CAPTCHA, or custom questions in the browser.")
+            print("2. If you opened the Apply form on a second step, attach:", saved_pdf.resolve())
+            answer = input("Did you submit the application? [y/N] (press Enter when done): ").strip().lower()
+            status = "applied" if answer in ("y", "yes", "s", "si", "sí") else "tailored"
 
         app_id = log_application(
             company=company,
