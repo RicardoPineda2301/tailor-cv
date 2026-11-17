@@ -45,6 +45,9 @@ def build_cv_data(profile: dict[str, Any], variant: str | None = None) -> dict[s
         "summary": selected["summary"],
         "personal_details": copy.deepcopy(selected["personal_details"]),
         "work_experience": copy.deepcopy(selected["work_experience"]),
+        "application_answers": copy.deepcopy(
+            selected.get("application_answers", profile.get("application_answers", {}))
+        ),
     }
 
 

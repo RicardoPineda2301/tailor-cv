@@ -12,6 +12,16 @@
     ["Spanish", 5],
     ["English", 5]
   ],
+  "application_answers": {
+    "city": "Madrid",
+    "postal_code": "28001",
+    "country": "Spain",
+    "location": "Madrid, Spain",
+    "github": "https://github.com/example",
+    "work_authorization": "Authorized to work in EU",
+    "notice_period": "2 weeks",
+    "english_level": "Fluent"
+  },
   "education": {
     "dates": "Jan 2018 - Nov 2022",
     "title": "Bachelor's Degree in Computer Science",

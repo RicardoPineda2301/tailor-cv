@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-from src.apply_assistant import run_apply_assistant
+from src.apply_assistant import run_apply_assistant, run_batch_apply
 from src.job_fetcher import JOB_SOURCES, search_jobs
 from src.pdf_generator import build_cv_data, draw_cover_letter, draw_cv, load_profile
 from src.tailor import generate_cover_letter, tailor_cv
@@ -27,6 +27,13 @@ DEFAULT_OUTPUT_DIR = Path("output")
 def _slugify(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9]+", "_", value.strip())
     return cleaned.strip("_") or "item"
+
+
+def _candidate_cv_filename(full_name: str) -> str:
+    """Return a generic, recruiter-friendly CV filename like 'Ricardo_Pineda_CV.pdf'."""
+    parts = [p for p in re.split(r"\s+", full_name.strip()) if p]
+    short = "_".join(parts[:2]) if parts else "Candidate"
+    return f"{_slugify(short.title())}_CV.pdf"
 
 
 def _read_job_description(args: argparse.Namespace) -> str:
@@ -60,8 +67,8 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
         provider=args.provider,
     )
 
-    filename = f"CV_{_slugify(args.company)}_{_slugify(args.role)}_{variant}.pdf"
-    out_file = args.out or (DEFAULT_OUTPUT_DIR / filename)
+    app_dir = DEFAULT_OUTPUT_DIR / "applications" / f"{_slugify(args.company)}_{_slugify(args.role)}_{variant}"
+    out_file = args.out or (app_dir / _candidate_cv_filename(cv_data["name"]))
     saved = draw_cv(out_file, result.tailored_data)
 
     app_id = log_application(
@@ -162,8 +169,8 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     elif args.jd_file:
         jd_text = Path(args.jd_file).read_text(encoding="utf-8")
 
-    filename = f"CV_{_slugify(args.company)}_{_slugify(args.role)}_{variant}.pdf"
-    out_file = Path(args.out) if args.out else (DEFAULT_OUTPUT_DIR / filename)
+    app_dir = DEFAULT_OUTPUT_DIR / "applications" / f"{_slugify(args.company)}_{_slugify(args.role)}_{variant}"
+    out_file = Path(args.out) if args.out else (app_dir / _candidate_cv_filename(cv_data["name"]))
 
     run_apply_assistant(
         job_url=args.url,
@@ -177,6 +184,30 @@ def _cmd_apply(args: argparse.Namespace) -> int:
         provider=args.provider,
         db_path=Path(args.db),
         dry_run=args.dry_run,
+        auto_submit=args.auto_submit,
+    )
+    return 0
+
+
+def _cmd_apply_batch(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    variant = args.variant or next(iter(profile["variants"]))
+    cv_data = build_cv_data(profile, variant)
+
+    sources = tuple(JOB_SOURCES.keys()) if args.source == "all" else (args.source,)
+    jobs = search_jobs(cv_data, query=args.query, sources=sources, limit=args.count)
+    run_batch_apply(
+        jobs=jobs,
+        cv_data=cv_data,
+        variant=variant,
+        output_dir=DEFAULT_OUTPUT_DIR / "applications",
+        slugify_fn=_slugify,
+        cv_filename=_candidate_cv_filename(cv_data["name"]),
+        mode=args.mode,
+        provider=args.provider,
+        db_path=Path(args.db),
+        dry_run=args.dry_run,
+        auto_submit=args.auto_submit,
     )
     return 0
 
@@ -272,7 +303,40 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Tailor CV, pre-fill form, save screenshot, and exit without submitting.",
     )
+    p_apply.add_argument(
+        "--auto-submit",
+        action="store_true",
+        help="Attempt to submit and self-heal validation errors (pauses on CAPTCHA/unknowns).",
+    )
     p_apply.set_defaults(func=_cmd_apply)
+
+    p_batch = sub.add_parser(
+        "apply-batch",
+        help="Search top jobs and open multiple pre-filled browser tabs at once.",
+    )
+    p_batch.add_argument("--query", default="QA", help="Search keywords.")
+    p_batch.add_argument(
+        "--source",
+        choices=("all", *JOB_SOURCES.keys()),
+        default="eu_remote",
+        help="Job API source.",
+    )
+    p_batch.add_argument("--variant", default=None, help="Profile variant (e.g. eu).")
+    p_batch.add_argument("--count", type=int, default=3, help="Number of tabs to open.")
+    p_batch.add_argument(
+        "--mode",
+        choices=("auto", "ai", "local"),
+        default="auto",
+        help="Tailoring mode.",
+    )
+    p_batch.add_argument(
+        "--provider",
+        choices=("gemini", "mistral", "openai"),
+        default=None,
+        help="Preferred AI provider.",
+    )
+    p_batch.add_argument("--dry-run", action="store_true", help="Pre-fill tabs and exit without pausing.")
+    p_batch.set_defaults(func=_cmd_apply_batch)
 
     return parser
 

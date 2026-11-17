@@ -1,0 +1,21 @@
+# tailor-cv - Next Steps
+
+## Estado actual (Completado)
+- Generador PDF con ReportLab (`src/pdf_generator.py`), experiencia en orden descendente, calificacion con 5 estrellas vectoriales y enlaces clickables.
+- Perfil privado separado en `data/profile.json` (ignorado en `.gitignore`) + plantilla `data/profile.example.json`.
+- Motor dual de adaptacion (`src/tailor.py`): Gemini AI (con respaldo entre modelos y fallback local por palabras clave).
+- Generacion automatica de Cover Letter en texto y PDF (`generate_cover_letter`, `draw_cover_letter`).
+- Buscadores modulares (`src/job_fetcher.py`, `src/eu_remote.py`): `eu_remote`, `spain` (spanishtoptechcompanies), `arbeitnow`, `remotive`.
+- Asistente Playwright (`src/apply_assistant.py`): nombre generico `Ricardo_Pineda_CV.pdf`, auto-clic en `Apply`, modo multi-pestana (`apply-batch`), bucle self-heal y timeout de 2 minutos.
+- Tracker en SQLite (`output/applications.db`) con exportacion a CSV (`src/tracker.py`).
+
+## Pendientes para la proxima sesion
+1. **Mejorar deteccion y relleno de campos/radio buttons personalizados:**
+   - Soportar componentes custom que no usan `<input type="radio">` ni `<select>` nativos (por ejemplo `role="radio"`, `role="radiogroup"`, `role="combobox"` o botones Si/No estilizados en Teamtailor y Ashby).
+   - Depurar por que quedaron algunos textboxes sin llenar en Teamtailor cuando la 2da llamada a Gemini hace timeout (ampliar reglas deterministas en `_answer_questions_local` para preguntas comunes como LinkedIn, Portfolio, GitHub, ciudad, experiencia, idioma, salario y B2B).
+   - Reducir llamadas a Gemini por oferta (combinar adaptacion de CV + preguntas del formulario en una sola llamada cuando sea posible para evitar latencia/timeouts).
+2. **Fuentes para Latam y EEUU:**
+   - Anadir nuevos fetchers regionales en `JOB_SOURCES` (`src/job_fetcher.py`) y validar con la variante `latam`.
+3. **Tests automatizados y limpieza:**
+   - Anadir tests unitarios (`pytest`) para `tailor.py`, `tracker.py` y `job_fetcher.py`.
+   - Hacer commit inicial limpio en Git verificando `git status` (sin datos personales ni `.env`).

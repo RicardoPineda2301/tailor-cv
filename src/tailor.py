@@ -195,7 +195,7 @@ def _call_gemini(api_key: str, prompt: str) -> str:
     candidates = (
         [explicit]
         if explicit
-        else ["gemini-3-flash-preview", "gemma-4-31b-it", "gemini-3.8-flash"]
+        else ["gemini-3-flash-preview", "gemma-4-31b-it"]
     )
     last_err: Exception | None = None
 
@@ -207,7 +207,8 @@ def _call_gemini(api_key: str, prompt: str) -> str:
         }).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            print(f"  [AI] Calling {model}...", flush=True)
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             return data["candidates"][0]["content"]["parts"][0]["text"]
         except urllib.error.HTTPError as exc:
@@ -434,7 +435,7 @@ def generate_cover_letter(
                 }).encode("utf-8")
                 req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
                 try:
-                    with urllib.request.urlopen(req, timeout=60) as resp:
+                    with urllib.request.urlopen(req, timeout=15) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
                     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                     break
@@ -450,3 +451,99 @@ def generate_cover_letter(
         if mode == "ai":
             raise
         return _cover_letter_fallback(cv_data, job_description, company, role), "local_template"
+
+
+def _answer_questions_local(
+    cv_data: dict[str, Any],
+    questions: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Deterministic fallback for common radio/select questions."""
+    answers_cfg = cv_data.get("application_answers") or {}
+    out: dict[str, str] = {}
+    for q in questions:
+        qid = q["id"]
+        label = q.get("label", "").lower()
+        options = q.get("options") or []
+        qtype = q.get("type", "text")
+
+        if qtype in ("radio", "select") and options:
+            opt_map = {o.lower().strip(): o for o in options}
+            if any(k in label for k in ("sponsor", "visa required", "need sponsorship")):
+                for cand in ("no", "no, i do not", "not required"):
+                    if cand in opt_map:
+                        out[qid] = opt_map[cand]
+                        break
+            elif any(k in label for k in ("authorized", "eligible", "work permit", "b2b", "english", "fluent")):
+                for cand in ("yes", "si", "sí", "fluent", "c1", "c2", "native"):
+                    for ok, ov in opt_map.items():
+                        if ok == cand or ok.startswith(cand):
+                            out[qid] = ov
+                            break
+                    if qid in out:
+                        break
+        elif qtype in ("text", "textarea"):
+            if "salary" in label or "compensation" in label:
+                if answers_cfg.get("salary_expectation"):
+                    out[qid] = str(answers_cfg["salary_expectation"])
+    return out
+
+
+def answer_form_questions(
+    cv_data: dict[str, Any],
+    job_description: str,
+    company: str,
+    role: str,
+    questions: list[dict[str, Any]],
+    mode: str = "auto",
+    provider: str | None = None,
+) -> dict[str, str]:
+    """Answer unanswered textboxes, textareas, radio groups, and selects in one batch call."""
+    if not questions:
+        return {}
+
+    load_dotenv()
+    mode = mode.lower()
+    if mode == "local":
+        return _answer_questions_local(cv_data, questions)
+
+    detected = _detect_provider(provider)
+    if not detected:
+        if mode == "ai":
+            raise RuntimeError("No AI API key found in .env.")
+        return _answer_questions_local(cv_data, questions)
+
+    provider_name, api_key = detected
+    profile_ctx = {
+        "name": cv_data["name"],
+        "summary": cv_data["summary"],
+        "skills": [s for s, _ in cv_data["skills"]],
+        "languages": cv_data["languages"],
+        "education": cv_data["education"],
+        "work_experience": cv_data["work_experience"][:4],
+        "application_answers": cv_data.get("application_answers", {}),
+    }
+    prompt = (
+        "You are filling out a job application form on behalf of the candidate.\n"
+        "RULES:\n"
+        "1. NEVER invent experience, companies, degrees, or metrics not in CANDIDATE PROFILE.\n"
+        "2. For 'radio' or 'select' questions, your answer MUST be one of the exact strings in 'options'.\n"
+        "3. For 'textarea' / open questions, write a concise, genuine 2-4 sentence answer in the same language as the question.\n"
+        "4. For short 'text' questions (e.g. salary, years, city), give a brief direct value.\n"
+        "5. Respond with valid JSON ONLY: a flat object mapping each question 'id' to its string answer.\n\n"
+        f"COMPANY: {company}\nROLE: {role}\n\n"
+        f"CANDIDATE PROFILE:\n{json.dumps(profile_ctx, ensure_ascii=False)}\n\n"
+        f"JOB DESCRIPTION:\n{job_description.strip()[:3500]}\n\n"
+        f"QUESTIONS:\n{json.dumps(questions, ensure_ascii=False)}"
+    )
+
+    try:
+        if provider_name == "gemini":
+            raw = _call_gemini(api_key, prompt)
+        else:
+            raw = _call_openai_compatible(provider_name, api_key, prompt)
+        parsed = _parse_json_response(raw)
+        return {str(k): str(v) for k, v in parsed.items() if v is not None and str(v).strip()}
+    except Exception:
+        if mode == "ai":
+            raise
+        return _answer_questions_local(cv_data, questions)

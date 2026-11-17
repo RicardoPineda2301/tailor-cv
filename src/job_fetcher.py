@@ -147,8 +147,15 @@ def fetch_spanish_tech(query: str = "", limit: int = 25) -> list[JobPosting]:
     return results
 
 
+def _fetch_eu_remote_wrapper(query: str = "", limit: int = 25) -> list[JobPosting]:
+    from src.eu_remote import fetch_eu_remote_jobs
+
+    return fetch_eu_remote_jobs(query=query, limit=limit)
+
+
 # Registry of available job sources. Add new regional/remote providers here.
 JOB_SOURCES: dict[str, JobFetcher] = {
+    "eu_remote": _fetch_eu_remote_wrapper,
     "spain": fetch_spanish_tech,
     "arbeitnow": fetch_arbeitnow,
     "remotive": fetch_remotive,
